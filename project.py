@@ -11,12 +11,16 @@ from langchain.chains.summarize import load_summarize_chain
 # from langchain.document_loaders import PyPDFLoader
 from langchain.chat_models import ChatOpenAI
 
+# Refine to mapreducefrom langchain.chains import RefineChain
+from langchain.llms import ChatOpenAI
+from langchain.prompts import Document, PromptTemplate
+from langchain.splitting import CharacterTextSplitter
+
+
 # from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.chains.question_answering import load_qa_chain
 from langchain.callbacks import get_openai_callback
 from dotenv import load_dotenv
 import streamlit as st
-from langchain.schema import StrOutputParser
 import os
 
 OPENAI_MODEL = "gpt-4-1106-preview"
@@ -28,7 +32,7 @@ def main():
 
     if pdf is not None:
         text_pdf = process_pdf(pdf)
-        steps = map_reduce_func(text_pdf)
+        steps = refine_func(text_pdf)
         st.write(steps)
         response_content = scripted_videos(steps)
 
@@ -52,12 +56,50 @@ def main():
                 st.text_area(first_line, video)
 
 
+def refine_func(text):
+    # Splitting the text
+    text_splitter = CharacterTextSplitter(
+        separator="\n",
+        chunk_size=1000,
+        chunk_overlap=400,
+        length_function=len,
+    )
+    texts = text_splitter.split_text(text)
+
+    # Setting up the chat model
+    llm = ChatOpenAI(
+        openai_api_key=OPENAI_API_KEY, model_name=OPENAI_MODEL, temperature=0
+    )
+
+    docs = [Document(page_content=t) for t in texts[:3]]
+
+    # Creating the prompt template
+    prompt_template = """
+        Role: Act as a professional SOP and procedures specialist.
+        Extract the steps of the SOP/procedure and ignore the content that is not vital to the execution of the main task by the worker.
+        Ignore the steps if they are only focused on
+        Write them in Portuguese.
+
+    {text}
+
+    STEPS:"""
+    PROMPT = PromptTemplate(template=prompt_template, input_variables=["text"])
+
+    # Create a refine chain
+    chain = RefineChain(llm, refine_prompt=PROMPT)
+
+    # Using the refine chain to iteratively refine the document
+    refined_output = chain.refine_documents(docs)
+
+    return refined_output
+
+
 def map_reduce_func(text):
     # We need to split the text using Character Text Split such that it should not increse token size
     text_splitter = CharacterTextSplitter(
         separator="\n",
-        chunk_size=800,
-        chunk_overlap=200,
+        chunk_size=1000,
+        chunk_overlap=400,
         length_function=len,
     )
 
@@ -72,7 +114,8 @@ def map_reduce_func(text):
 
     prompt_template = """
         Role: Act as a professional SOP and procedures specialist.
-        Highlight and summarize each steps of the SOP and procedure.
+        Extract the steps of the SOP/procedure and ignore the content that is not vital execution of the main task by the worker.
+        Ignore the steps if they are only focused on
         Write them in portuguese.
 
     {text}
